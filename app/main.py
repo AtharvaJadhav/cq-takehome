@@ -5,7 +5,7 @@ from starlette.status import HTTP_502_BAD_GATEWAY
 
 from .config import settings
 from .models import GenerateColumnRequest, GenerateColumnResponse
-from .llm import classify_majors
+from .llm import process_data_with_prompt
 
 app = FastAPI()
 
@@ -20,8 +20,7 @@ app.add_middleware(
 @app.post("/generate-column", response_model=GenerateColumnResponse)
 async def generate_column(req: GenerateColumnRequest):
     try:
-        majors = [row.get("major", "") for row in req.rows]
-        values = classify_majors(majors)
+        values = process_data_with_prompt(req.rows, req.prompt)
         return GenerateColumnResponse(values=values)
     except RuntimeError as e:
         raise HTTPException(
