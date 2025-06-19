@@ -1,4 +1,3 @@
-
 import React, { useState, useRef } from 'react';
 import {
   Paper,
@@ -16,14 +15,16 @@ import {
   IconButton,
   Tooltip,
   Fade,
+  CircularProgress,
 } from '@mui/material';
-import { DataGrid, GridColDef, GridRowModel } from '@mui/x-data-grid';
-import { 
-  Add as AddIcon, 
-  Download as DownloadIcon, 
+import { DataGrid, GridColDef, GridRowModel, GridRowSelectionModel } from '@mui/x-data-grid';
+import {
+  Add as AddIcon,
+  Download as DownloadIcon,
   Upload as UploadIcon,
   Delete as DeleteIcon,
-  ViewColumn as ViewColumnIcon 
+  ViewColumn as ViewColumnIcon,
+  AutoAwesome as AutoAwesomeIcon,
 } from '@mui/icons-material';
 import { mockStudents, defaultColumns, Student } from '../data/mockStudents';
 import { exportToCSV, parseCSV } from '../utils/csv';
@@ -34,10 +35,12 @@ const Spreadsheet: React.FC = () => {
   const [openColumnDialog, setOpenColumnDialog] = useState(false);
   const [newColumnName, setNewColumnName] = useState('');
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' as 'success' | 'error' });
+  const [selectedRows, setSelectedRows] = useState<number[]>([]);
+  const [isClassifying, setIsClassifying] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleCellEdit = (params: GridRowModel) => {
-    const updatedData = data.map(row => 
+    const updatedData = data.map(row =>
       row.id === params.id ? { ...row, ...params } : row
     );
     setData(updatedData);
@@ -47,13 +50,13 @@ const Spreadsheet: React.FC = () => {
 
   const handleAddRow = () => {
     const newId = Math.max(...data.map(row => row.id)) + 1;
-    const newRow: Student = { 
-      id: newId, 
-      firstName: '', 
-      lastName: '', 
-      major: '' 
+    const newRow: Student = {
+      id: newId,
+      firstName: '',
+      lastName: '',
+      major: ''
     };
-    
+
     columns.forEach(col => {
       if (col.field !== 'id' && !(col.field in newRow)) {
         (newRow as any)[col.field] = '';
@@ -83,7 +86,7 @@ const Spreadsheet: React.FC = () => {
     };
 
     setColumns([...columns, newColumn]);
-    
+
     const updatedData = data.map(row => ({
       ...row,
       [newColumnName]: ''
@@ -109,7 +112,7 @@ const Spreadsheet: React.FC = () => {
       try {
         const csvText = e.target?.result as string;
         const importedData = parseCSV(csvText);
-        
+
         if (importedData.length > 0) {
           const newColumnFields = new Set<string>();
           importedData.forEach(row => {
@@ -135,7 +138,7 @@ const Spreadsheet: React.FC = () => {
       }
     };
     reader.readAsText(file);
-    
+
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -145,6 +148,120 @@ const Spreadsheet: React.FC = () => {
     const updatedData = data.filter(row => row.id !== id);
     setData(updatedData);
     setSnackbar({ open: true, message: 'Row deleted', severity: 'success' });
+  };
+
+  // Function to classify majors using the backend API
+  const classifyMajors = async (majors: string[]): Promise<string[]> => {
+    try {
+      const response = await fetch('http://localhost:8000/generate-column', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          rows: majors.map(major => ({ major })),
+          columnName: 'classify'
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const result = await response.json();
+      return result.values;
+    } catch (error) {
+      console.error('Classification error:', error);
+      throw error;
+    }
+  };
+
+  // Auto-populate classify column for all rows
+  const autoPopulateClassifyColumn = async () => {
+    // Create classify column if it doesn't exist
+    if (!columns.some(col => col.field === 'classify')) {
+      const newColumn: GridColDef = {
+        field: 'classify',
+        headerName: 'Classify',
+        width: 150,
+        editable: true,
+      };
+      setColumns([...columns, newColumn]);
+
+      const updatedData = data.map(row => ({
+        ...row,
+        classify: ''
+      }));
+      setData(updatedData);
+    }
+
+    setIsClassifying(true);
+    try {
+      const majors = data.map(row => row.major || '');
+      const classifications = await classifyMajors(majors);
+
+      const updatedData = data.map((row, index) => ({
+        ...row,
+        classify: classifications[index] || ''
+      }));
+
+      setData(updatedData);
+      setSnackbar({ open: true, message: 'Classification completed for all rows', severity: 'success' });
+    } catch (error) {
+      setSnackbar({ open: true, message: 'Failed to classify majors', severity: 'error' });
+    } finally {
+      setIsClassifying(false);
+    }
+  };
+
+  // Auto-populate classify column for selected rows only
+  const autoPopulateSelectedRows = async () => {
+    if (selectedRows.length === 0) {
+      setSnackbar({ open: true, message: 'Please select rows first', severity: 'error' });
+      return;
+    }
+
+    // Create classify column if it doesn't exist
+    if (!columns.some(col => col.field === 'classify')) {
+      const newColumn: GridColDef = {
+        field: 'classify',
+        headerName: 'Classify',
+        width: 150,
+        editable: true,
+      };
+      setColumns([...columns, newColumn]);
+
+      const updatedData = data.map(row => ({
+        ...row,
+        classify: ''
+      }));
+      setData(updatedData);
+    }
+
+    setIsClassifying(true);
+    try {
+      const selectedData = data.filter(row => selectedRows.includes(row.id));
+      const majors = selectedData.map(row => row.major || '');
+      const classifications = await classifyMajors(majors);
+
+      const updatedData = data.map(row => {
+        if (selectedRows.includes(row.id)) {
+          const selectedIndex = selectedData.findIndex(selectedRow => selectedRow.id === row.id);
+          return {
+            ...row,
+            classify: classifications[selectedIndex] || ''
+          };
+        }
+        return row;
+      });
+
+      setData(updatedData);
+      setSnackbar({ open: true, message: `Classification completed for ${selectedRows.length} selected rows`, severity: 'success' });
+    } catch (error) {
+      setSnackbar({ open: true, message: 'Failed to classify majors', severity: 'error' });
+    } finally {
+      setIsClassifying(false);
+    }
   };
 
   const columnsWithActions: GridColDef[] = [
@@ -178,10 +295,10 @@ const Spreadsheet: React.FC = () => {
 
   return (
     <Fade in timeout={600}>
-      <Paper 
-        elevation={0} 
-        sx={{ 
-          p: 4, 
+      <Paper
+        elevation={0}
+        sx={{
+          p: 4,
           borderRadius: 4,
           background: 'linear-gradient(145deg, #1a1a1a 0%, #1e1e1e 100%)',
           border: '1px solid rgba(255, 255, 255, 0.08)',
@@ -190,35 +307,35 @@ const Spreadsheet: React.FC = () => {
       >
         {/* Action Bar */}
         <Box sx={{ mb: 3 }}>
-          <Stack 
-            direction={{ xs: 'column', sm: 'row' }} 
-            spacing={2} 
-            sx={{ 
+          <Stack
+            direction={{ xs: 'column', sm: 'row' }}
+            spacing={2}
+            sx={{
               alignItems: { xs: 'stretch', sm: 'center' },
               justifyContent: 'space-between'
             }}
           >
             <Stack direction="row" spacing={2} sx={{ alignItems: 'center' }}>
-              <Chip 
-                label={`${data.length} records`} 
-                color="primary" 
+              <Chip
+                label={`${data.length} records`}
+                color="primary"
                 variant="outlined"
                 size="small"
-                sx={{ 
+                sx={{
                   fontWeight: 500,
                   backgroundColor: 'rgba(0, 188, 212, 0.1)',
                   borderColor: 'rgba(0, 188, 212, 0.3)'
-                }} 
+                }}
               />
             </Stack>
-            
+
             <Stack direction="row" spacing={1.5}>
               <Button
                 variant="contained"
                 startIcon={<AddIcon />}
                 onClick={handleAddRow}
                 size="small"
-                sx={{ 
+                sx={{
                   background: 'linear-gradient(45deg, #00bcd4, #0097a7)',
                   minWidth: 'auto',
                   px: 2
@@ -226,7 +343,7 @@ const Spreadsheet: React.FC = () => {
               >
                 Row
               </Button>
-              
+
               <Button
                 variant="outlined"
                 startIcon={<ViewColumnIcon />}
@@ -237,7 +354,19 @@ const Spreadsheet: React.FC = () => {
               >
                 Column
               </Button>
-              
+
+              <Button
+                variant="outlined"
+                startIcon={isClassifying ? <CircularProgress size={16} /> : <AutoAwesomeIcon />}
+                onClick={autoPopulateClassifyColumn}
+                disabled={isClassifying}
+                color="primary"
+                size="small"
+                sx={{ minWidth: 'auto', px: 2 }}
+              >
+                {isClassifying ? 'Classifying...' : 'Classify All'}
+              </Button>
+
               <Button
                 variant="outlined"
                 startIcon={<DownloadIcon />}
@@ -248,7 +377,7 @@ const Spreadsheet: React.FC = () => {
               >
                 Export
               </Button>
-              
+
               <Button
                 variant="outlined"
                 startIcon={<UploadIcon />}
@@ -271,8 +400,8 @@ const Spreadsheet: React.FC = () => {
         </Box>
 
         {/* Data Grid */}
-        <Box sx={{ 
-          height: 600, 
+        <Box sx={{
+          height: 600,
           width: '100%',
           '& .MuiDataGrid-root': {
             boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)',
@@ -292,14 +421,12 @@ const Spreadsheet: React.FC = () => {
                 paginationModel: { page: 0, pageSize: 25 },
               },
             }}
-            checkboxSelection
-            disableRowSelectionOnClick
           />
         </Box>
 
         {/* Add Column Dialog */}
-        <Dialog 
-          open={openColumnDialog} 
+        <Dialog
+          open={openColumnDialog}
           onClose={() => setOpenColumnDialog(false)}
           maxWidth="sm"
           fullWidth
@@ -349,8 +476,8 @@ const Spreadsheet: React.FC = () => {
           onClose={() => setSnackbar({ ...snackbar, open: false })}
           anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
         >
-          <Alert 
-            onClose={() => setSnackbar({ ...snackbar, open: false })} 
+          <Alert
+            onClose={() => setSnackbar({ ...snackbar, open: false })}
             severity={snackbar.severity}
             variant="filled"
             sx={{ borderRadius: 2 }}

@@ -16,8 +16,14 @@ def classify_majors(majors: List[str]) -> List[str]:
     Retries up to 2 times on transient failures.
     """
     if settings.ENV.lower() == "dev":
-        # Mock mode: return random labels
-        return [random.choice(["Engineer", "Non-Engineer"]) for _ in majors]
+        # NEC logic: deterministic mapping for engineering majors
+        engineer_keywords = [
+            'engineering', 'engineer', 'cs', 'computer science', 'bc', 'ece', 'electrical', 'mechanical', 'civil', 'chemical', 'biomedical', 'aerospace', 'software', 'hardware', 'it', 'information technology', 'industrial', 'systems', 'materials', 'environmental', 'robotics', 'mechatronics', 'manufacturing', 'petroleum', 'nuclear', 'mining', 'automotive', 'structural', 'bioengineering', 'biotechnology', 'data science', 'ai', 'artificial intelligence'
+        ]
+        def is_engineer(major: str) -> bool:
+            major_lower = major.strip().lower()
+            return any(keyword in major_lower for keyword in engineer_keywords)
+        return ["Engineer" if is_engineer(major) else "Non-Engineer" for major in majors]
 
     prompt = (
         "You are a classifier. Given this JSON array of majors:\n"
